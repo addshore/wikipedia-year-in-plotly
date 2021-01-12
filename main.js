@@ -123,5 +123,37 @@ Promise.all(fetchPromises).then(data => {
 }).then(dataToPlot => {
     console.log("Preparing plot")
 
+    var plotly = require('plotly')(fs.readFileSync(".plotly_user").toString(), fs.readFileSync(".plotly_token").toString());
 
+    var traces = [];
+    for (const article in dataToPlot) {
+        traces.push({
+            x: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+            y: dataToPlot[article],
+            type: "scatter",
+            line: {shape: "spline"},
+            name: article
+        });
+    }
+
+    var layout = {
+        yaxis: {
+          title: project+" pageviews",
+          type: "log",
+          autorange: true
+        },
+        xaxis: {
+            title: year
+          }
+      };
+
+    var graphOptions = {
+        filename: "basic-line",
+        fileopt: "overwrite",
+        filename: project+"-"+year+"-topviews-interesting",
+        layout: layout
+    };
+    plotly.plot(traces, graphOptions, function (err, msg) {
+        console.log(msg);
+    });
 })
