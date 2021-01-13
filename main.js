@@ -1,8 +1,10 @@
 const pageviews = require('pageviews');
 var fs = require('fs')
 
-let project = "en.wikipedia"
-let year = 2020
+let project = process.argv[2]
+let year = parseInt(process.argv[3])
+
+console.log("Running for " + project + " " + year)
 
 // Fetch all the API responses
 var fetchPromises = [];

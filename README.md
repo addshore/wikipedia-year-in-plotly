@@ -33,8 +33,10 @@ In order to run this code you need a plotly account and to create the `.plotly_u
 
 To run for different years you currently need to alter the code.
 
-Then just run the script.
+Then just run the script with some arguments, such as "en.wikipedia" and "2020".
 
 ```sh
-npm main.js
+npm main.js <project> <year>
 ```
+
+Note: 2016 is the first year that this will work for due to the limited data contained in the pageview API.
