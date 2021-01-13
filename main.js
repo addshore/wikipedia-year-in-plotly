@@ -150,7 +150,6 @@ Promise.all(fetchPromises).then(data => {
       };
 
     var graphOptions = {
-        filename: "basic-line",
         fileopt: "overwrite",
         filename: project+"-"+year+"-topviews-interesting",
         layout: layout
