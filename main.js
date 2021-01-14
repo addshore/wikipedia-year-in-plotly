@@ -22,7 +22,7 @@ for (let month = 1; month <= 12; month++) {
         year: year,
         month: month,
         day: 'all-days',
-        limit: plotCount + 2 // Add 2, as we will probably remove some, like Special: and Main_Page?
+        limit: plotCount + 3 // Add 2, as we will probably remove some, like Special: and Main_Page?, incomplete years
       }))
 }
 
@@ -62,20 +62,26 @@ Promise.all(fetchPromises).then(data => {
         granularity: 'monthly'
     })
     return pageviewData
-
 }).then(data => {
     dumpIfDebug('pageviewData',data)
     console.log("Simplifying data for further processing")
     var plotableData = {}
     data.forEach(articleResponse => {
-        let perMonthViewData = [];
+        let perMonthViewData = [0,0,0,0,0,0,0,0,0,0,0,0];
         let article = "";
+        let monthsOfData = 0;
         articleResponse['items'].forEach(monthResponse => {
             article = monthResponse.article
+            let timestamp = monthResponse.timestamp // e.g. 2020120100
+            let month = parseInt(timestamp.substring(4, timestamp.length - 4))
             let views = monthResponse.views
-            perMonthViewData.push(views)
+            perMonthViewData[month-1] = views
+            monthsOfData++
         })
-        plotableData[article.replace(/_/g, " ")] = perMonthViewData
+        // Require at least 6 months of data
+        if(monthsOfData >= 6 ) {
+            plotableData[article.replace(/_/g, " ")] = perMonthViewData
+        }
     })
     // This is list indexed by normalized article name => [ page views of each month ]
     dumpIfDebug('plotableData',plotableData)
@@ -88,7 +94,8 @@ Promise.all(fetchPromises).then(data => {
     let articleByMaxPageViews = {}
     let articleYearTotalViews = {}
     for (const article in data) {
-        data[article].forEach( monthViews => {
+        for (const month in data[article]) {
+            let monthViews = data[article][month]
             if(!(article in articleByMaxPageViews)) {
                 articleByMinPageViews[article] = monthViews
                 articleByMaxPageViews[article] = monthViews
@@ -102,7 +109,7 @@ Promise.all(fetchPromises).then(data => {
                 }
                 articleYearTotalViews[article] =  articleYearTotalViews[article] + monthViews
             }
-        } )
+        }
     }
 
     // Find the largest changes in views of each page
