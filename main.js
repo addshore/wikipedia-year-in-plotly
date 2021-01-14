@@ -3,8 +3,16 @@ var fs = require('fs')
 
 let project = process.argv[2]
 let year = parseInt(process.argv[3])
+let plotCount = 12
 
 console.log("Running for " + project + " " + year)
+
+function dumpIfDebug(name, data) {
+    if(process.env.DUMP_DATA) {
+        fs.writeFileSync('.tmp.'+name+'.json',JSON.stringify(data))
+
+    }
+}
 
 // Fetch all the API responses
 var fetchPromises = [];
@@ -14,11 +22,12 @@ for (let month = 1; month <= 12; month++) {
         year: year,
         month: month,
         day: 'all-days',
-        limit: 6 // Limit to the first n results
+        limit: plotCount + 2 // Add 2, as we will probably remove some, like Special: and Main_Page?
       }))
 }
 
 Promise.all(fetchPromises).then(data => {
+    fs.writeFileSync('.tmp.topPageViewData.json',JSON.stringify(data))
     console.log("Collecting all of the articles that had top page views in a month")
     let allArticles = [];
     data.forEach(response => {
@@ -28,6 +37,7 @@ Promise.all(fetchPromises).then(data => {
             allArticles.push(article)
         })
     })
+    dumpIfDebug('allArticles',allArticles)
     return allArticles
 }).then(allArticles => {
     console.log("Filtering articles we don't want and duplicates")
@@ -44,117 +54,145 @@ Promise.all(fetchPromises).then(data => {
 }).then(allArticles => {
     console.log("Fetch the whole year of views for all of the articles")
     // TODO this seems to timeout a few times, so should not do so much async?
-    return pageviews.getPerArticlePageviews({
+    let pageviewData = pageviews.getPerArticlePageviews({
         articles: allArticles,
         project: project,
         start: year+'0101',
         end: (year+1)+'0101',
         granularity: 'monthly'
     })
+    return pageviewData
 
 }).then(data => {
-    console.log("Filtering articles that are \"boring\"?")
-
-    // Find the min and max views of each page
-    let articleByMinPageViews = {}
-    let articleByMaxPageViews = {}
+    dumpIfDebug('pageviewData',data)
+    console.log("Simplifying data for further processing")
+    var plotableData = {}
     data.forEach(articleResponse => {
-        articleResponse['items'].forEach(monthResponse => {
-            let article = monthResponse.article
-            let views = monthResponse.views
-            if(!(article in articleByMaxPageViews)) {
-                articleByMinPageViews[article] = views
-                articleByMaxPageViews[article] = views
-            } else {
-                if(views < articleByMinPageViews[article]) {
-                    articleByMinPageViews[article] = views
-                }
-                if(views > articleByMaxPageViews[article]) {
-                    articleByMaxPageViews[article] = views
-                }
-            }
-        })
-    })
-
-    // Find the largest changes in views of each page
-    let articleMinMaxDifferences = {}
-    for (const article in articleByMinPageViews) {
-        let diff = articleByMaxPageViews[article] - articleByMinPageViews[article]
-        articleMinMaxDifferences[article] = diff
-    }
-
-    // Figure out a shorter list of articles to plot
-    let articlesToKeep = [];
-    for (let x = 1; x <= 15; x++) {
-        let highestKey = Object.keys(articleByMaxPageViews).reduce((a, b) => articleByMaxPageViews[a] > articleByMaxPageViews[b] ? a : b);
-        articlesToKeep.push(highestKey)
-        delete articleByMaxPageViews[highestKey]
-    }
-    for (let x = 1; x <= 15; x++) {
-        let highestKey = Object.keys(articleMinMaxDifferences).reduce((a, b) => articleMinMaxDifferences[a] > articleMinMaxDifferences[b] ? a : b);
-        articlesToKeep.push(highestKey)
-        delete articleMinMaxDifferences[highestKey]
-    }
-
-    // Make the list unique
-    function onlyUnique(value, index, self) {
-        return self.indexOf(value) === index;
-    }
-    articlesToKeep = articlesToKeep.filter(onlyUnique)
-
-    // Output
-    console.log("Keeping " + articlesToKeep.length + " of " + Object.keys(articleByMinPageViews).length)
-
-    // Collate and filter the raw data
-    var dataToPlot = {}
-    data.forEach(articleResponse => {
-        let articleViewData = [];
+        let perMonthViewData = [];
         let article = "";
         articleResponse['items'].forEach(monthResponse => {
             article = monthResponse.article
             let views = monthResponse.views
-            articleViewData.push(views)
+            perMonthViewData.push(views)
         })
-        if(articlesToKeep.indexOf(article) > -1) {
-            console.log("Using " + article)
-            dataToPlot[article.replace(/_/g, " ")] = articleViewData
-        }
+        plotableData[article.replace(/_/g, " ")] = perMonthViewData
     })
+    // This is list indexed by normalized article name => [ page views of each month ]
+    dumpIfDebug('plotableData',plotableData)
+    return plotableData
+}).then(data => {
+    console.log("Compiling ordered groups of interesting articles")
 
-    return dataToPlot
-}).then(dataToPlot => {
-    console.log("Preparing plot")
+    // Find the min, max and total views of each page
+    let articleByMinPageViews = {}
+    let articleByMaxPageViews = {}
+    let articleYearTotalViews = {}
+    for (const article in data) {
+        data[article].forEach( monthViews => {
+            if(!(article in articleByMaxPageViews)) {
+                articleByMinPageViews[article] = monthViews
+                articleByMaxPageViews[article] = monthViews
+                articleYearTotalViews[article] = monthViews
+            } else {
+                if(monthViews < articleByMinPageViews[article]) {
+                    articleByMinPageViews[article] = monthViews
+                }
+                if(monthViews > articleByMaxPageViews[article]) {
+                    articleByMaxPageViews[article] = monthViews
+                }
+                articleYearTotalViews[article] =  articleYearTotalViews[article] + monthViews
+            }
+        } )
+    }
+
+    // Find the largest changes in views of each page
+    let articleMinMaxDifferences = {}
+    for (const article in data) {
+        let diff = articleByMaxPageViews[article] - articleByMinPageViews[article]
+        articleMinMaxDifferences[article] = diff
+    }
+
+    function orderTrimAndSwitchData( list ) {
+        let clone = JSON.parse(JSON.stringify(list))
+        let orderedObject = {}
+        for (let x = 1; x <= Math.min(Object.keys(clone).length,plotCount); x++) {
+            let highestKey = Object.keys(clone).reduce((a, b) => clone[a] > clone[b] ? a : b);
+            // Switch the data we were ordering by with the actual view data
+            orderedObject[highestKey] = data[highestKey]
+            delete clone[highestKey]
+        }
+        return orderedObject;
+    }
+
+    dumpIfDebug('articleByMinPageViews',articleByMinPageViews)
+    dumpIfDebug('articleByMaxPageViews',articleByMaxPageViews)
+    dumpIfDebug('articleMinMaxDifferences',articleMinMaxDifferences)
+    dumpIfDebug('articleYearTotalViews',articleYearTotalViews)
+
+    let lists = {
+        min: orderTrimAndSwitchData(articleByMinPageViews),
+        max: orderTrimAndSwitchData(articleByMaxPageViews),
+        diff: orderTrimAndSwitchData(articleMinMaxDifferences),
+        total: orderTrimAndSwitchData(articleYearTotalViews),
+    }
+
+    // Look through the lists, and make one more list of mixed excellence
+    let mixedList = {}
+
+    for (let x = 0; x <= plotCount; x++) {
+        for (const listName in lists) {
+            if(Object.keys(lists[listName]).length >= x+1) {
+                // Order with some slowly decreasing number (first ones added were most important)
+                mixedList[Object.keys(lists[listName])[x]] = 100 - Object.keys(mixedList).length
+            }
+        }
+    }
+
+    lists['mix'] = orderTrimAndSwitchData(mixedList);
+
+    dumpIfDebug('lists',lists)
+    return lists;
+}).then(lists => {
+    console.log("Starting plots")
 
     var plotly = require('plotly')(fs.readFileSync(".plotly_user").toString(), fs.readFileSync(".plotly_token").toString());
 
-    var traces = [];
-    for (const article in dataToPlot) {
-        traces.push({
-            x: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
-            y: dataToPlot[article],
-            type: "scatter",
-            line: {shape: "spline"},
-            name: article
+    function plot( dataToPlot, nameSuffix ) {
+        var traces = [];
+        for (const article in dataToPlot) {
+            traces.push({
+                x: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+                y: dataToPlot[article],
+                type: "scatter",
+                line: {shape: "spline"},
+                name: article
+            });
+        }
+
+        var layout = {
+            title: project+" "+year+" topviews "+nameSuffix,
+            yaxis: {
+              title: project+" pageviews",
+              type: "log",
+              autorange: true
+            },
+            xaxis: {
+                title: year
+              }
+          };
+
+        var graphOptions = {
+            fileopt: "overwrite",
+            filename: project+"-"+year+"-topviews-" + nameSuffix,
+            layout: layout
+        };
+        plotly.plot(traces, graphOptions, function (err, msg) {
+            console.log(msg.filename + " is: " + msg.url);
         });
     }
 
-    var layout = {
-        yaxis: {
-          title: project+" pageviews",
-          type: "log",
-          autorange: true
-        },
-        xaxis: {
-            title: year
-          }
-      };
-
-    var graphOptions = {
-        fileopt: "overwrite",
-        filename: project+"-"+year+"-topviews-interesting",
-        layout: layout
-    };
-    plotly.plot(traces, graphOptions, function (err, msg) {
-        console.log(msg);
-    });
+    plot(lists.max,"max-peak")
+    plot(lists.diff,"max-change")
+    plot(lists.total,"max-total")
+    plot(lists.mix,"max-mix")
 })

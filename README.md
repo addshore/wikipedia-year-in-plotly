@@ -40,3 +40,9 @@ npm main.js <project> <year>
 ```
 
 Note: 2016 is the first year that this will work for due to the limited data contained in the pageview API.
+
+If you want to dump the data as it passes through the script you can do something like:
+
+```sh
+DUMP_DATA=1 node main.js en.wikipedia 2020
+```
